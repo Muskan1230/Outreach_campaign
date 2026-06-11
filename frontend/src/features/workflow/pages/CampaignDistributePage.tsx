@@ -363,6 +363,7 @@ function StatusSidebar({
   statusError,
   activeChannel,
   setActiveChannel,
+  trackingLinks,
 }: {
   campaign: CampaignRecord
   templates: TemplateListItem[]
@@ -373,6 +374,7 @@ function StatusSidebar({
   statusError: string
   activeChannel: ChannelKey
   setActiveChannel: (key: ChannelKey) => void
+  trackingLinks: Map<string, TrackingLink>
 }) {
   const status = campaign.status
   const isLive = status === 'active'
@@ -564,6 +566,8 @@ function StatusSidebar({
           {CHANNELS.map(c => {
             const has = templateMap.has(c.key)
             const isSelected = activeChannel === c.key
+            const tl = trackingLinks.get(c.key)
+            const clickCount = tl ? tl.total_clicks : 0
             return (
               <button
                 key={c.key}
@@ -573,6 +577,9 @@ function StatusSidebar({
               >
                 <span className="dist-ch-row-icon" style={{ color: has ? c.color : undefined }}>{c.icon}</span>
                 <span className="dist-ch-row-label">{c.label}</span>
+                {clickCount > 0 && (
+                  <span className="dist-ch-row-clicks">{clickCount}</span>
+                )}
                 <span className={`dist-ch-row-dot${has ? ' dist-ch-row-dot--ready' : ''}`} />
               </button>
             )
@@ -770,6 +777,7 @@ export function CampaignDistributePage() {
           statusError={statusError}
           activeChannel={activeChannel}
           setActiveChannel={setActiveChannel}
+          trackingLinks={trackingLinks}
         />
 
         {/* Right main panel */}
