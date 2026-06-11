@@ -1,0 +1,174 @@
+<USER_REQUEST>
+Build the next backend + frontend workflow for the outreach campaign module so the candidate side and recruiter review side work end to end.
+
+Goal
+
+Implement the full application capture pipeline:
+Public Apply Form -> Validation -> Duplicate Detection -> Candidate Application Record -> Worker Profile Create/Update -> Workflow Stage Event -> Recruiter Queue
+
+1. Public application submission flow
+
+Update /apply/:id so candidates can submit the published form on mobile or desktop.
+
+The page must:
+
+show the opportunity summary,
+
+render the dynamic form schema,
+
+validate required fields,
+
+require consent before submission,
+
+require mobile number as mandatory unless the form config explicitly allows otherwise.
+
+Support fields such as:
+
+full name,
+
+mobile number,
+
+email,
+
+current location,
+
+preferred work location,
+
+worker category,
+
+skills,
+
+years of experience,
+
+availability/shift preference,
+
+resume upload or profile link,
+
+government ID or compliance fields if enabled.
+
+2. Duplicate detection
+
+On submit, run duplicate detection in this order:
+
+mobile number,
+
+email,
+
+government/document ID if collected.
+
+If a match is found:
+
+create a new candidate application record,
+
+link it to the existing worker profile,
+
+mark the application as duplicate / possible duplicate.
+
+If no match is found:
+
+create a new worker profile,
+
+create the application record,
+
+link both together.
+
+Keep campaign attribution immutable on the application record.
+
+3. Data model and storage
+
+Add or update entities for:
+
+Campaign,
+
+ApplicationForm,
+
+CandidateApplication,
+
+WorkerProfile,
+
+Document,
+
+ConsentLog,
+
+WorkflowEvent.
+
+The candidate application should store:
+
+campaign ID,
+
+form ID,
+
+submitted timestamp,
+
+raw responses,
+
+source link ID,
+
+duplicate flag,
+
+workflow stage,
+
+linked worker profile ID.
+
+Store uploaded files securely and reference them from the application or worker profile.
+
+4. Workflow assignment
+
+After submission, automatically create a workflow event and assign the default stage based on admin configuration.
+
+Suppo
+<truncated 980 bytes>
+ creation.
+
+Keep audit logs for:
+
+form submission,
+
+profile creation/update,
+
+workflow stage changes,
+
+consent capture.
+
+8. Implementation style
+
+Do not break existing campaign, outreach, form, distribute, or login flow.
+
+Reuse existing routes and components where possible.
+
+Use TypeScript and keep the code aligned with the current architecture.
+
+Add only the minimal new UI components and backend services needed to support this flow.
+
+Output required
+
+List of files to create or modify.
+
+Code changes for:
+
+apply page submission,
+
+backend APIs/services for dedupe and profile creation,
+
+workflow event tracking,
+
+applicants queue UI and actions,
+
+acknowledgement trigger.
+
+Include any required type updates and validation helpers.
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-06-09T14:17:49+05:30.
+
+The user's current state is as follows:
+Other open documents:
+- c:\Users\Muskan Sharma\OneDrive - E-SOLUTIONS IT SERVICES PRIVATE LIMITED\Desktop\Outreach_Campaign\frontend\src\features\auth\context\AuthContext.tsx (LANGUAGE_TSX)
+- c:\Users\Muskan Sharma\OneDrive - E-SOLUTIONS IT SERVICES PRIVATE LIMITED\Desktop\Outreach_Campaign\frontend\src\features\campaigns\pages\CampaignSetupPage.tsx (LANGUAGE_TSX)
+- c:\Users\Muskan Sharma\OneDrive - E-SOLUTIONS IT SERVICES PRIVATE LIMITED\Desktop\Outreach_Campaign\frontend\src\features\forms\utils\visibility.ts (LANGUAGE_TYPESCRIPT)
+- c:\Users\Muskan Sharma\OneDrive - E-SOLUTIONS IT SERVICES PRIVATE LIMITED\Desktop\Outreach_Campaign\backend\scripts\migrate-submissions.js (LANGUAGE_JAVASCRIPT)
+- c:\Users\Muskan Sharma\OneDrive - E-SOLUTIONS IT SERVICES PRIVATE LIMITED\Desktop\Outreach_Campaign\.env (LANGUAGE_UNSPECIFIED)
+Running terminal commands:
+- npm run dev (in c:\Users\Muskan Sharma\OneDrive - E-SOLUTIONS IT SERVICES PRIVATE LIMITED\Desktop\Outreach_Campaign\backend, running for 1h26m35s)
+- npm run dev (in c:\Users\Muskan Sharma\OneDrive - E-SOLUTIONS IT SERVICES PRIVATE LIMITED\Desktop\Outreach_Campaign\frontend, running for 1h26m13s)
+</ADDITIONAL_METADATA>
