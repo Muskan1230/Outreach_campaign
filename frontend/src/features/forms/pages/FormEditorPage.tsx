@@ -771,8 +771,8 @@ export function ApplicationFormEditorPage({
       { field_type: 'Text', label: 'Key Skills', placeholder: 'e.g. two-wheeler license, smartphone', required: true, help_text: 'List your main skills', sort_order: 7 },
       { field_type: 'Number', label: 'Years of Experience', placeholder: '2', required: true, help_text: 'Total years in gig / field work', sort_order: 8 },
       { field_type: 'Select', label: 'Availability / Shift Preference', placeholder: 'Select preference', required: true, help_text: 'When are you available to work?', options: ['Day Shift', 'Night Shift', 'Weekends Only', 'Flexible / Any'], sort_order: 9 },
-      { field_type: 'Text', label: 'Resume / Profile Link', placeholder: 'LinkedIn or portfolio URL', required: false, help_text: 'Optional resume or LinkedIn link', sort_order: 10 },
-      { field_type: 'Select', label: 'Government ID / Compliance', placeholder: 'Select ID type', required: false, help_text: 'Provide if required by business rules', options: ['Aadhaar Card', 'PAN Card', 'Driving License', 'Voter ID', 'None'], sort_order: 11 },
+      { field_type: 'File Upload', label: 'Upload Resume', placeholder: 'Select resume file', required: false, help_text: 'Upload your resume or CV (PDF, DOC, DOCX, JPEG, PNG)', sort_order: 10 },
+      { field_type: 'File Upload', label: 'Upload Government ID / Compliance', placeholder: 'Select ID file', required: false, help_text: 'Upload government-issued ID (PDF, JPEG, PNG)', sort_order: 11 },
       { field_type: 'Checkbox', label: 'Consent', placeholder: '', required: true, help_text: 'Mandatory before submission', options: ['I agree to be contacted and my data stored by the platform'], sort_order: 12 },
     ]
     const existingLabels = new Set(fields.map((field) => field.label.trim().toLowerCase()))
@@ -807,8 +807,8 @@ export function ApplicationFormEditorPage({
     'Key Skills',
     'Years of Experience',
     'Availability / Shift Preference',
-    'Resume / Profile Link',
-    'Government ID / Compliance',
+    'Upload Resume',
+    'Upload Government ID / Compliance',
     'Consent',
   ]
 

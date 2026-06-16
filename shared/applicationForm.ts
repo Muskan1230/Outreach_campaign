@@ -60,6 +60,7 @@ export type ApplicationFieldPayload = {
 export type ApplicationFieldRecord = ApplicationFieldPayload & {
   id: string
   form_id: string
+  field_key?: string
   created_at: string
   updated_at: string
 }

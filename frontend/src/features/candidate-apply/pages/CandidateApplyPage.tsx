@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
-import { supabase } from '../../../lib/supabase'
 import type {
   ApplicationFieldRecord,
   ApplicationFormWithFields,
@@ -15,9 +14,16 @@ import { isFieldVisible } from '../../forms/utils/visibility'
 // ─── Constants ─────────────────────────────────────────────────────────────
 const INDIAN_MOBILE_RE = /^[6-9][0-9]{9}$/
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const ALLOWED_FILE_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg']
-const ALLOWED_FILE_EXT = ['.pdf', '.jpg', '.jpeg', '.png']
-const MAX_FILE_SIZE_MB = 5
+const ALLOWED_FILE_TYPES = [
+  'application/pdf',
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]
+const ALLOWED_FILE_EXT = ['.pdf', '.jpg', '.jpeg', '.png', '.doc', '.docx']
+const MAX_FILE_SIZE_MB = 10
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -36,18 +42,40 @@ function isConsentField(field: ApplicationFieldRecord) {
 }
 
 // ─── Upload helper ─────────────────────────────────────────────────────────
+// Uploads a file to Supabase Storage via the backend API endpoint.
+// The backend uses the service-role key so no bucket RLS issues arise.
+// Returns a JSON-encoded metadata string: {storage_path, file_name, mime_type, file_size}
 async function uploadFileToStorage(
   file: File,
-  applicationId: string,
+  formId: string,
   fieldId: string,
 ): Promise<string> {
-  const ext = file.name.split('.').pop()?.toLowerCase() ?? 'bin'
-  const path = `applications/${applicationId}/${fieldId}_${Date.now()}.${ext}`
-  const { error } = await supabase.storage
-    .from('candidate-documents')
-    .upload(path, file, { upsert: false, contentType: file.type })
-  if (error) throw new Error(`File upload failed: ${error.message}`)
-  return path
+  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'
+  const url = `${apiBase}/api/forms/${encodeURIComponent(formId)}/fields/upload`
+
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('field_id', fieldId)
+
+  const response = await fetch(url, {
+    method: 'POST',
+    body: formData,
+    // No Content-Type header — browser sets it automatically with the boundary
+  })
+
+  const payload = await response.json().catch(() => null)
+
+  if (!response.ok) {
+    throw new Error(payload?.message || 'File upload failed. Please try again.')
+  }
+
+  // Return a JSON string so the backend submit handler can decode all metadata
+  return JSON.stringify({
+    storage_path: payload.storage_path,
+    file_name:    payload.file_name,
+    mime_type:    payload.mime_type,
+    file_size:    payload.file_size,
+  })
 }
 
 // ─── Sub-components ────────────────────────────────────────────────────────
@@ -98,40 +126,131 @@ function SuccessScreen({
   applicationId: string | null
   campaignTitle: string
 }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = async () => {
+    if (applicationId) {
+      await navigator.clipboard.writeText(applicationId)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
   return (
-    <div className="apply-shell">
-      <div className="apply-success-card">
-        <div className="apply-success-card__icon">
-          {isDuplicate ? '🔄' : '✅'}
+    <div className="apply-shell" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '70vh', padding: '24px 16px' }}>
+      <div className="apply-success-card" style={{
+        maxWidth: '520px',
+        width: '100%',
+        background: 'rgba(15, 23, 42, 0.85)',
+        border: '1px solid rgba(16, 185, 129, 0.3)',
+        borderRadius: '16px',
+        padding: '40px 32px',
+        boxShadow: '0 12px 40px rgba(0, 0, 0, 0.4)',
+        textAlign: 'center',
+        animation: 'fadeIn 0.3s ease-out'
+      }}>
+        <div style={{
+          width: '64px',
+          height: '64px',
+          borderRadius: '50%',
+          background: isDuplicate ? 'rgba(99, 102, 241, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+          color: isDuplicate ? '#818cf8' : '#34d399',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '2.2rem',
+          margin: '0 auto 20px',
+          fontWeight: 'bold'
+        }}>
+          {isDuplicate ? '🔄' : '✓'}
         </div>
-        <h1 className="apply-success-card__title">
+        <h1 className="apply-success-card__title" style={{ fontSize: '1.6rem', fontWeight: '800', color: '#f8fafc', marginBottom: '10px' }}>
           {isDuplicate ? 'Profile Updated!' : 'Application Submitted!'}
         </h1>
-        <p className="apply-success-card__subtitle">
-          {isDuplicate
-            ? 'We found your existing profile and have updated it with your latest details.'
-            : <>Thank you for applying to <strong>{campaignTitle}</strong>. Your application has been received.</>}
+        <p className="apply-success-card__subtitle" style={{ fontSize: '0.92rem', color: '#94a3b8', lineHeight: '1.6', marginBottom: '28px' }}>
+          {isDuplicate ? (
+            'We identified your existing profile in our system and have updated it with your latest inputs.'
+          ) : (
+            <>
+              Thank you for applying to <strong>{campaignTitle}</strong>. Your candidate application has been recorded.
+            </>
+          )}
         </p>
 
         {applicationId && (
-          <div className="apply-success-card__ref">
-            <span className="apply-success-card__ref-label">Application Reference</span>
-            <code className="apply-success-card__ref-value">{applicationId}</code>
+          <div className="apply-success-card__ref" style={{
+            background: 'rgba(30, 41, 59, 0.5)',
+            border: '1px solid rgba(255, 255, 255, 0.05)',
+            borderRadius: '10px',
+            padding: '16px',
+            marginBottom: '28px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px'
+          }}>
+            <span className="apply-success-card__ref-label" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em', color: '#64748b', fontWeight: '700' }}>
+              Application Reference
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+              <code className="apply-success-card__ref-value" style={{ fontSize: '1rem', color: '#38bdf8', fontWeight: '700', letterSpacing: '0.02em', background: 'transparent', border: 'none', padding: 0 }}>
+                {applicationId}
+              </code>
+              <button
+                type="button"
+                onClick={() => void handleCopy()}
+                style={{
+                  background: copied ? 'rgba(16, 185, 129, 0.15)' : 'rgba(51, 65, 85, 0.6)',
+                  color: copied ? '#34d399' : '#cbd5e1',
+                  border: copied ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(255, 255, 255, 0.08)',
+                  padding: '4px 10px',
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  cursor: 'pointer',
+                  fontWeight: '600',
+                  transition: 'all 150ms ease'
+                }}
+              >
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
           </div>
         )}
 
-        <div className="apply-success-card__next">
-          <p className="apply-success-card__next-title">What happens next?</p>
-          <ul className="apply-success-card__next-list">
-            <li>Our team will review your application</li>
-            <li>We'll reach out on your mobile number</li>
-            <li>Track your status anytime using your mobile number</li>
+        <div className="apply-success-card__next" style={{
+          textAlign: 'left',
+          background: 'rgba(30, 41, 59, 0.3)',
+          borderRadius: '12px',
+          padding: '20px 24px',
+          border: '1px solid rgba(255, 255, 255, 0.03)',
+          marginBottom: '28px'
+        }}>
+          <p className="apply-success-card__next-title" style={{ fontWeight: '700', fontSize: '0.9rem', color: '#e2e8f0', margin: '0 0 10px' }}>
+            What happens next?
+          </p>
+          <ul className="apply-success-card__next-list" style={{ paddingLeft: '16px', margin: 0, fontSize: '0.82rem', color: '#94a3b8', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <li>Our recruitment specialists will review your credentials.</li>
+            <li>We will get in touch with you on your registered mobile number.</li>
+            <li>You can track the status of your application anytime below.</li>
           </ul>
         </div>
 
         <Link
           to={`/apply/status`}
           className="apply-success-card__track-btn"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '100%',
+            height: '44px',
+            background: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+            color: '#fff',
+            borderRadius: '8px',
+            fontWeight: '600',
+            textDecoration: 'none',
+            fontSize: '0.9rem',
+            boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)',
+            transition: 'all 150ms ease'
+          }}
         >
           Track Application Status →
         </Link>
@@ -153,9 +272,14 @@ function FileField({
   const inputRef = useRef<HTMLInputElement>(null)
   const [selected, setSelected] = useState<File | null>(null)
   const [localError, setLocalError] = useState('')
+  const [isDragActive, setIsDragActive] = useState(false)
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] ?? null
+    handleFile(file)
+  }
+
+  const handleFile = (file: File | null) => {
     setLocalError('')
     if (!file) {
       setSelected(null)
@@ -185,16 +309,56 @@ function FileField({
     onFileChange(field.id, file)
   }
 
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setIsDragActive(true)
+    } else if (e.type === 'dragleave') {
+      setIsDragActive(false)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragActive(false)
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFile(e.dataTransfer.files[0])
+    }
+  }
+
+  const clearFile = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelected(null)
+    onFileChange(field.id, null)
+    if (inputRef.current) inputRef.current.value = ''
+  }
+
   const displayError = error || localError
 
   return (
     <div className={`apply-file-field ${displayError ? 'apply-file-field--error' : ''}`}>
       <div
         className="apply-file-drop"
+        onDragEnter={handleDrag}
+        onDragOver={handleDrag}
+        onDragLeave={handleDrag}
+        onDrop={handleDrop}
         onClick={() => inputRef.current?.click()}
         onKeyDown={(e) => e.key === 'Enter' && inputRef.current?.click()}
         role="button"
         tabIndex={0}
+        style={{
+          border: isDragActive ? '1px dashed #6366f1' : displayError ? '1px dashed #f43f5e' : '1px dashed rgba(99, 102, 241, 0.25)',
+          background: isDragActive ? 'rgba(99, 102, 241, 0.05)' : 'rgba(8, 14, 30, 0.3)',
+          borderRadius: '10px',
+          padding: '16px 20px',
+          textAlign: 'center',
+          cursor: 'pointer',
+          transition: 'all 200ms ease',
+          boxShadow: isDragActive ? '0 0 12px rgba(99, 102, 241, 0.1)' : 'none'
+        }}
       >
         <input
           ref={inputRef}
@@ -204,25 +368,50 @@ function FileField({
           style={{ display: 'none' }}
         />
         {selected ? (
-          <div className="apply-file-drop__selected">
-            <span className="apply-file-drop__file-icon">📄</span>
-            <div>
-              <p className="apply-file-drop__file-name">{selected.name}</p>
-              <p className="apply-file-drop__file-meta">
-                {(selected.size / 1024).toFixed(0)} KB · {selected.type}
-              </p>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+            <div className="apply-file-drop__selected" style={{ display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left' }}>
+              <span className="apply-file-drop__file-icon" style={{ fontSize: '1.6rem' }}>📄</span>
+              <div>
+                <p className="apply-file-drop__file-name" style={{ margin: 0, fontWeight: '600', color: '#f8fafc', fontSize: '0.86rem' }}>{selected.name}</p>
+                <p className="apply-file-drop__file-meta" style={{ margin: '2px 0 0', fontSize: '0.74rem', color: '#94a3b8' }}>
+                  {(selected.size / 1024).toFixed(0)} KB · {selected.type.split('/')[1]?.toUpperCase() || 'DOCUMENT'}
+                </p>
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={clearFile}
+              style={{
+                background: 'rgba(244, 63, 94, 0.15)',
+                color: '#fb7185',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '6px 12px',
+                fontSize: '0.75rem',
+                cursor: 'pointer',
+                fontWeight: '600',
+                transition: 'all 150ms ease'
+              }}
+            >
+              Clear
+            </button>
           </div>
         ) : (
-          <div className="apply-file-drop__placeholder">
-            <span className="apply-file-drop__upload-icon">☁️</span>
-            <p>Click to upload or drag & drop</p>
-            <small>{ALLOWED_FILE_EXT.join(', ')} · Max {MAX_FILE_SIZE_MB}MB</small>
+          <div className="apply-file-drop__placeholder" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px' }}>
+            <span className="apply-file-drop__upload-icon" style={{ fontSize: '1.6rem', color: isDragActive ? '#6366f1' : '#475569', transition: 'color 200ms ease' }}>☁️</span>
+            <div style={{ textAlign: 'left' }}>
+              <p style={{ margin: 0, fontSize: '0.86rem', fontWeight: '500', color: '#cbd5e1' }}>
+                {isDragActive ? 'Drop file here to upload' : 'Click to upload or drag & drop'}
+              </p>
+              <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: '#64748b' }}>
+                {ALLOWED_FILE_EXT.join(', ').toUpperCase()} · Max {MAX_FILE_SIZE_MB}MB
+              </p>
+            </div>
           </div>
         )}
       </div>
       {displayError && (
-        <span className="apply-field-error">{displayError}</span>
+        <span className="apply-field-error" style={{ display: 'block', marginTop: '6px', fontSize: '0.78rem', color: '#fb7185' }}>{displayError}</span>
       )}
     </div>
   )
@@ -409,19 +598,21 @@ export function CandidateApplyPage() {
     }
 
     try {
-      // Upload any file fields first
+      // Upload any file fields first, using the backend upload endpoint.
+      // Each call returns a JSON metadata string containing storage_path + mime info.
       const finalResponses = { ...responses }
-      // We'll use a placeholder application ID for file paths; real upload happens post-submit
-      // For now, we upload with a temp path and store the storage path in responses
-      const tempId = crypto.randomUUID()
       for (const [fieldId, file] of Object.entries(fileObjects)) {
         if (file) {
           try {
-            const storagePath = await uploadFileToStorage(file, tempId, fieldId)
-            finalResponses[fieldId] = storagePath
-          } catch {
-            // If storage fails (bucket not configured), fall back to filename
-            finalResponses[fieldId] = file.name
+            const uploadMetadata = await uploadFileToStorage(file, formId, fieldId)
+            finalResponses[fieldId] = uploadMetadata
+          } catch (uploadErr) {
+            // Surface upload errors explicitly — don't silently fall back to filename
+            throw new Error(
+              uploadErr instanceof Error
+                ? `Could not upload file: ${uploadErr.message}`
+                : 'File upload failed. Please check your connection and try again.',
+            )
           }
         }
       }
@@ -596,13 +787,13 @@ export function CandidateApplyPage() {
             // File upload field
             if (field.field_type === 'File Upload') {
               return (
-                <div key={field.id} id={`apply-field-${field.id}`} className="apply-field-group">
-                  <label className="apply-field-label">
+                <div key={field.id} id={`apply-field-${field.id}`} className="apply-field-group" style={{ marginBottom: '24px' }}>
+                  <label className="apply-field-label" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '600', fontSize: '0.9rem', color: '#cbd5e1', marginBottom: '8px' }}>
                     {field.label}
-                    {field.required && <span className="apply-field-required" aria-hidden>*</span>}
+                    {field.required && <span className="apply-field-required" style={{ color: '#f43f5e', fontWeight: 'bold' }} aria-hidden>*</span>}
                   </label>
                   {field.help_text && (
-                    <p className="apply-field-hint">{field.help_text}</p>
+                    <p className="apply-field-hint" style={{ margin: '0 0 8px', fontSize: '0.78rem', color: '#64748b' }}>{field.help_text}</p>
                   )}
                   <FileField
                     field={field}
@@ -615,12 +806,12 @@ export function CandidateApplyPage() {
 
             // Standard inputs
             return (
-              <div key={field.id} id={`apply-field-${field.id}`} className="apply-field-group">
+              <div key={field.id} id={`apply-field-${field.id}`} className="apply-field-group" style={{ marginBottom: '24px' }}>
                 {field.field_type !== 'Checkbox' && (
-                  <label htmlFor={`input-${field.id}`} className="apply-field-label">
+                  <label htmlFor={`input-${field.id}`} className="apply-field-label" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontWeight: '600', fontSize: '0.9rem', color: '#cbd5e1', marginBottom: '8px' }}>
                     {field.label}
                     {(field.required || (isMobile && field.validation_rules?.optional !== true)) && (
-                      <span className="apply-field-required" aria-hidden>*</span>
+                      <span className="apply-field-required" style={{ color: '#f43f5e', fontWeight: 'bold' }} aria-hidden>*</span>
                     )}
                   </label>
                 )}
@@ -639,6 +830,16 @@ export function CandidateApplyPage() {
                       inputMode={isMobile ? 'numeric' : undefined}
                       maxLength={isMobile ? 10 : undefined}
                       className={`apply-input ${showError ? 'apply-input--error' : ''}`}
+                      style={{
+                        width: '100%',
+                        borderRadius: '9px',
+                        border: showError ? '1px solid #f43f5e' : '1px solid rgba(99, 102, 241, 0.18)',
+                        background: 'rgba(8, 14, 30, 0.60)',
+                        color: '#f8fafc',
+                        padding: '12px 14px',
+                        fontSize: '0.92rem',
+                        transition: 'border-color 150ms ease, box-shadow 150ms ease',
+                      }}
                       placeholder={
                         isMobile
                           ? (field.placeholder || '10-digit mobile (e.g. 9876543210)')
@@ -651,7 +852,7 @@ export function CandidateApplyPage() {
                       aria-invalid={showError}
                     />
                     {isMobile && !showError && (
-                      <p className="apply-field-hint">
+                      <p className="apply-field-hint" style={{ margin: '4px 0 0', fontSize: '0.78rem', color: '#64748b' }}>
                         10-digit Indian number starting with 6, 7, 8, or 9
                       </p>
                     )}
@@ -663,6 +864,16 @@ export function CandidateApplyPage() {
                   <select
                     id={`input-${field.id}`}
                     className={`apply-select ${showError ? 'apply-input--error' : ''}`}
+                    style={{
+                      width: '100%',
+                      borderRadius: '9px',
+                      border: showError ? '1px solid #f43f5e' : '1px solid rgba(99, 102, 241, 0.18)',
+                      background: 'rgba(8, 14, 30, 0.60)',
+                      color: '#f8fafc',
+                      padding: '12px 14px',
+                      fontSize: '0.92rem',
+                      transition: 'border-color 150ms ease',
+                    }}
                     value={val ?? ''}
                     onChange={(e) => updateValue(field.id, e.target.value)}
                     onBlur={() => handleBlur(field)}
@@ -676,9 +887,9 @@ export function CandidateApplyPage() {
 
                 {/* Radio */}
                 {field.field_type === 'Radio' && (
-                  <div className="apply-radio-group">
+                  <div className="apply-radio-group" style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', marginTop: '6px' }}>
                     {(field.options ?? []).map((opt) => (
-                      <label key={opt} className="apply-radio-option">
+                      <label key={opt} className="apply-radio-option" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.88rem' }}>
                         <input
                           type="radio"
                           name={`radio-${field.id}`}
@@ -686,6 +897,7 @@ export function CandidateApplyPage() {
                           checked={val === opt}
                           onChange={(e) => updateValue(field.id, e.target.value)}
                           onBlur={() => handleBlur(field)}
+                          style={{ margin: 0 }}
                         />
                         <span>{opt}</span>
                       </label>
@@ -695,13 +907,13 @@ export function CandidateApplyPage() {
 
                 {/* Checkbox (non-consent) */}
                 {field.field_type === 'Checkbox' && (
-                  <div className="apply-checkbox-group">
-                    <label className="apply-field-label">{field.label}</label>
+                  <div className="apply-checkbox-group" style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
+                    <label className="apply-field-label" style={{ fontWeight: '600', fontSize: '0.9rem', color: '#cbd5e1' }}>{field.label}</label>
                     {(field.options ?? []).map((opt) => {
                       const selectedList = Array.isArray(val) ? val : []
                       const checked = selectedList.includes(opt)
                       return (
-                        <label key={opt} className="apply-checkbox-option">
+                        <label key={opt} className="apply-checkbox-option" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.88rem' }}>
                           <input
                             type="checkbox"
                             checked={checked}
@@ -712,6 +924,7 @@ export function CandidateApplyPage() {
                               updateValue(field.id, Array.from(next))
                             }}
                             onBlur={() => handleBlur(field)}
+                            style={{ margin: 0 }}
                           />
                           <span>{opt}</span>
                         </label>
@@ -721,11 +934,11 @@ export function CandidateApplyPage() {
                 )}
 
                 {field.help_text && field.field_type !== 'Phone' && (
-                  <p className="apply-field-hint">{field.help_text}</p>
+                  <p className="apply-field-hint" style={{ margin: '6px 0 0', fontSize: '0.78rem', color: '#64748b' }}>{field.help_text}</p>
                 )}
 
                 {showError && (
-                  <p id={`err-${field.id}`} className="apply-field-error" role="alert">
+                  <p id={`err-${field.id}`} className="apply-field-error" style={{ display: 'block', marginTop: '6px', fontSize: '0.78rem', color: '#fb7185' }} role="alert">
                     {err}
                   </p>
                 )}
@@ -733,16 +946,53 @@ export function CandidateApplyPage() {
             )
           })}
 
+          {/* Inline styles for custom animations (spin, fadeIn) */}
+          <style>{`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+            @keyframes fadeIn {
+              from { opacity: 0; transform: translateY(8px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+          `}</style>
+
           {/* ── Submit button ─────────────── */}
           <button
             type="submit"
             className={`apply-submit-btn ${submitting ? 'apply-submit-btn--loading' : ''}`}
             disabled={submitting}
+            style={{
+              width: '100%',
+              height: '48px',
+              borderRadius: '9px',
+              background: submitting ? 'rgba(99, 102, 241, 0.5)' : 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+              color: '#fff',
+              fontSize: '0.96rem',
+              fontWeight: '600',
+              cursor: submitting ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '10px',
+              border: 'none',
+              boxShadow: submitting ? 'none' : '0 4px 12px rgba(99, 102, 241, 0.3)',
+              transition: 'all 150ms ease',
+              marginTop: '32px'
+            }}
           >
             {submitting ? (
               <>
-                <span className="apply-submit-btn__spinner" aria-hidden />
-                Submitting…
+                <span className="apply-submit-btn__spinner" style={{
+                  width: '18px',
+                  height: '18px',
+                  border: '2px solid rgba(255, 255, 255, 0.3)',
+                  borderTop: '2px solid #fff',
+                  borderRadius: '50%',
+                  animation: 'spin 0.8s linear infinite'
+                }} aria-hidden />
+                Submitting Application…
               </>
             ) : (
               'Submit Application →'

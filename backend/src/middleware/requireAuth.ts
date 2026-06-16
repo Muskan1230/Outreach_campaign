@@ -7,6 +7,7 @@ export interface AuthenticatedRequest extends Request {
     id: string
     email?: string
     role?: string
+    isMock?: boolean  // true when mock-token is used (no real auth.users entry)
   }
 }
 
@@ -30,6 +31,20 @@ export async function requireAuth(
   }
 
   const token = authHeader.slice(7)
+
+  if (token === 'mock-token') {
+    // Attach user to request for downstream handlers.
+    // isMock=true signals that this is a dev bypass — no real auth.users row exists,
+    // so routes must NOT insert this id into FK-constrained recruiter_id columns.
+    ;(req as AuthenticatedRequest).user = {
+      id: '00000000-0000-0000-0000-000000000000',
+      email: 'mock@example.com',
+      role: 'authenticated',
+      isMock: true,
+    }
+    next()
+    return
+  }
 
   const {
     data: { user },

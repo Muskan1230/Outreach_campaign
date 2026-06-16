@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { Router, type Request, type Response, type NextFunction } from 'express'
 import { z } from 'zod'
 import { supabase } from '../lib/supabase.js'
@@ -41,6 +42,11 @@ const campaignPayloadSchema = z
     end_date: z.string().trim().min(1, 'End date is required'),
     status: campaignStatusSchema.optional(),
     application_form_id: z.string().uuid().nullable().optional(),
+    acknowledgment_channels: z.array(z.string()).optional().default([]),
+    acknowledgment_email_template_id: z.string().nullable().optional(),
+    acknowledgment_sms_template_id: z.string().nullable().optional(),
+    acknowledgment_whatsapp_template_id: z.string().nullable().optional(),
+    recruiter_alert_email_template_id: z.string().nullable().optional(),
   })
   .refine(
     (value) => {
@@ -58,8 +64,14 @@ const campaignStatusPatchSchema = z.object({
   status: campaignStatusSchema,
 })
 
+const campaignDuplicateResponseSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  templates_count: z.number().int().nonnegative(),
+})
+
 const campaignSelect =
-  'id,name,opportunity_title,opportunity_desc,mode,worker_type,target_region,skills_required,target_channels,compensation_model,compensation_details,start_date,end_date,status,application_form_id,created_at,updated_at'
+  'id,name,opportunity_title,opportunity_desc,mode,worker_type,target_region,skills_required,target_channels,compensation_model,compensation_details,start_date,end_date,status,application_form_id,acknowledgment_channels,acknowledgment_email_template_id,acknowledgment_sms_template_id,acknowledgment_whatsapp_template_id,recruiter_alert_email_template_id,created_at,updated_at'
 const campaignListSelect = 'id,name,opportunity_title,status,worker_type,target_region,start_date,end_date,application_form_id'
 
 function normalizeCampaign(record: CampaignRecord | null) {
@@ -68,6 +80,7 @@ function normalizeCampaign(record: CampaignRecord | null) {
     ...record,
     skills_required: Array.isArray(record.skills_required) ? record.skills_required : [],
     target_channels: Array.isArray(record.target_channels) ? record.target_channels : [],
+    acknowledgment_channels: Array.isArray(record.acknowledgment_channels) ? record.acknowledgment_channels : [],
     compensation_details:
       record.compensation_details && typeof record.compensation_details === 'object'
         ? record.compensation_details
@@ -93,6 +106,11 @@ function normalizeCampaignInput(body: unknown) {
         .map((value) => (typeof value === 'string' ? normalizeOutreachChannel(value) : ''))
         .filter(Boolean)
     : []
+  const acknowledgmentChannels = Array.isArray(record.acknowledgment_channels)
+    ? record.acknowledgment_channels
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter(Boolean)
+    : []
   const rawCompensation = stringifyValue(record.compensation_model)
   const compensationDetails =
     record.compensation_details && typeof record.compensation_details === 'object' && !Array.isArray(record.compensation_details)
@@ -109,6 +127,11 @@ function normalizeCampaignInput(body: unknown) {
     target_region: stringifyValue(record.target_region),
     skills_required: skillsRequired,
     target_channels: targetChannels,
+    acknowledgment_channels: acknowledgmentChannels,
+    acknowledgment_email_template_id: record.acknowledgment_email_template_id !== undefined ? record.acknowledgment_email_template_id : undefined,
+    acknowledgment_sms_template_id: record.acknowledgment_sms_template_id !== undefined ? record.acknowledgment_sms_template_id : undefined,
+    acknowledgment_whatsapp_template_id: record.acknowledgment_whatsapp_template_id !== undefined ? record.acknowledgment_whatsapp_template_id : undefined,
+    recruiter_alert_email_template_id: record.recruiter_alert_email_template_id !== undefined ? record.recruiter_alert_email_template_id : undefined,
     compensation_model: normalizeCompensationModel(rawCompensation),
     compensation_details: compensationDetails,
     start_date: stringifyValue(record.start_date),
@@ -310,6 +333,104 @@ router.patch('/:id/status', async (req: Request, res: Response, next: NextFuncti
   }
 })
 
+router.post('/:id/duplicate', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const campaignId = z.string().uuid().parse(req.params.id)
+
+    const { data: sourceCampaign, error: campaignError } = await supabase
+      .from('campaigns')
+      .select(campaignSelect)
+      .eq('id', campaignId)
+      .single()
+
+    if (campaignError) {
+      if (campaignError.code === 'PGRST116') {
+        return res.status(404).json({ message: 'Campaign not found' })
+      }
+      throw campaignError
+    }
+
+    const normalizedSource = normalizeCampaign(sourceCampaign as CampaignRecord)
+    if (!normalizedSource) {
+      return res.status(404).json({ message: 'Campaign not found' })
+    }
+
+    const newCampaignId = randomUUID()
+    const duplicateName = `${normalizedSource.name} (Copy)`
+
+    const { data: duplicateCampaign, error: duplicateCampaignError } = await supabase
+      .from('campaigns')
+      .insert({
+        id: newCampaignId,
+        name: duplicateName,
+        opportunity_title: normalizedSource.opportunity_title,
+        opportunity_desc: normalizedSource.opportunity_desc,
+        mode: normalizedSource.mode,
+        worker_type: normalizedSource.worker_type,
+        target_region: normalizedSource.target_region,
+        skills_required: normalizedSource.skills_required,
+        target_channels: normalizedSource.target_channels,
+        compensation_model: normalizedSource.compensation_model,
+        compensation_details: normalizedSource.compensation_details ?? {},
+        start_date: normalizedSource.start_date,
+        end_date: normalizedSource.end_date,
+        status: 'draft',
+        application_form_id: normalizedSource.application_form_id ?? null,
+        acknowledgment_channels: normalizedSource.acknowledgment_channels ?? [],
+        acknowledgment_email_template_id: normalizedSource.acknowledgment_email_template_id ?? null,
+        acknowledgment_sms_template_id: normalizedSource.acknowledgment_sms_template_id ?? null,
+        acknowledgment_whatsapp_template_id: normalizedSource.acknowledgment_whatsapp_template_id ?? null,
+        recruiter_alert_email_template_id: normalizedSource.recruiter_alert_email_template_id ?? null,
+      })
+      .select(campaignSelect)
+      .single()
+
+    if (duplicateCampaignError) {
+      throw duplicateCampaignError
+    }
+
+    const { data: sourceTemplates, error: templatesError } = await supabase
+      .from('outreach_templates')
+      .select('channel,template_name,message_body,language,media_attachment_url')
+      .eq('campaign_id', campaignId)
+      .order('created_at', { ascending: true })
+
+    if (templatesError) {
+      throw templatesError
+    }
+
+    const templatesToInsert = (sourceTemplates ?? []).map((template) => ({
+      id: randomUUID(),
+      campaign_id: newCampaignId,
+      channel: template.channel,
+      template_name: template.template_name,
+      message_body: template.message_body,
+      language: template.language,
+      media_attachment_url: template.media_attachment_url,
+    }))
+
+    if (templatesToInsert.length > 0) {
+      const { error: insertTemplatesError } = await supabase
+        .from('outreach_templates')
+        .insert(templatesToInsert)
+
+      if (insertTemplatesError) {
+        throw insertTemplatesError
+      }
+    }
+
+    const responseBody = {
+      id: duplicateCampaign?.id ?? newCampaignId,
+      name: duplicateCampaign?.name ?? duplicateName,
+      templates_count: templatesToInsert.length,
+    }
+
+    return res.status(201).json(campaignDuplicateResponseSchema.parse(responseBody))
+  } catch (error) {
+    return handleError(error, next)
+  }
+})
+
 router.delete('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { count: applicantCount, error: applicantCountError } = await supabase
@@ -458,6 +579,76 @@ router.get('/:id/applicants', async (req: Request, res: Response, next: NextFunc
         limit,
         total,
         totalPages: Math.max(1, Math.ceil(total / limit)),
+      },
+    })
+  } catch (error) {
+    return handleError(error, next)
+  }
+})
+
+router.get('/:id/applicants/:appId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { id: campaignId, appId } = req.params
+
+    const { data: campaign, error: campaignError } = await supabase
+      .from('campaigns')
+      .select('id, name, opportunity_title')
+      .eq('id', campaignId)
+      .single()
+
+    if (campaignError) {
+      if (campaignError.code === 'PGRST116') {
+        return res.status(404).json({ message: 'Campaign not found' })
+      }
+      throw campaignError
+    }
+
+    const { data, error } = await supabase
+      .from('vw_application_queue')
+      .select('*')
+      .eq('campaign_id', campaignId)
+      .eq('application_id', appId)
+      .single()
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return res.status(404).json({ message: 'Application not found' })
+      }
+      throw error
+    }
+
+    let mappedStatus: ApplicationStatus = 'new'
+    if (data.status === 'application_received' || data.status === 'duplicate_review') {
+      mappedStatus = 'new'
+    } else if (data.status === 'selected') {
+      mappedStatus = 'offered'
+    } else if (data.status === 'onboarded') {
+      mappedStatus = 'hired'
+    } else if (data.status === 'shortlisted' || data.status === 'rejected') {
+      mappedStatus = data.status
+    }
+
+    return res.json({
+      campaign: {
+        id: campaign.id,
+        name: campaign.name,
+        opportunity_title: campaign.opportunity_title,
+      },
+      application: {
+        ...data,
+        status: mappedStatus,
+        candidate_name: data.full_name,
+        candidate_mobile: data.mobile,
+        candidate_email: data.email,
+        candidate_location: data.current_location,
+        preferred_location:
+          Array.isArray(data.preferred_work_locations) && data.preferred_work_locations.length > 0
+            ? data.preferred_work_locations[0]
+            : null,
+        applied_at: data.submitted_at,
+        source: data.source_channel || null,
+        source_channel: data.source_channel || null,
+        updated_at: data.submitted_at,
       },
     })
   } catch (error) {

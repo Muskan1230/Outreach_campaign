@@ -21,7 +21,6 @@ export function FormCard({ form, onDelete }: FormCardProps) {
       </div>
       <p className="template-media">
         {form.campaign_id ? 'Linked to campaign' : 'Standalone form'}
-        {form.supported_languages?.length ? ` · ${form.supported_languages.join(', ')}` : ''}
       </p>
       <div className="template-actions">
         <Link className="ghost-button" to={`/forms/${form.id}`}>

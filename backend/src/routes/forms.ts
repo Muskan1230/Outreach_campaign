@@ -10,6 +10,9 @@ import {
   type ValidationRules,
 } from '../../../shared/applicationForm.js'
 import { normalizeWorkerCategory } from '../../../shared/campaign.js'
+import { sendOrchestratorNotification, createOrchestratorTemplate, getOrchestratorTemplates } from '../lib/notificationOrchestrator.js'
+import { buildAcknowledgmentData } from '../services/acknowledgmentService.js'
+import { sendRecruiterNewApplicationAlert } from '../services/recruiterAlertService.js'
 
 const router = Router()
 
@@ -566,7 +569,30 @@ router.post('/forms/:id/submit', async (req: Request, res: Response, next: NextF
       await Promise.all([
         supabase
           .from('application_forms')
-          .select('id, campaign_id, title, version, consent_text')
+          .select(`
+            id,
+            campaign_id,
+            title,
+            version,
+            consent_text,
+            campaigns:campaigns!application_forms_campaign_id_fkey (
+              id,
+              name,
+              opportunity_title,
+              opportunity_desc,
+              mode,
+              worker_type,
+              target_region,
+              compensation_model,
+              compensation_details,
+              owner_id,
+              acknowledgment_channels,
+              acknowledgment_email_template_id,
+              acknowledgment_sms_template_id,
+              acknowledgment_whatsapp_template_id,
+              recruiter_alert_email_template_id
+            )
+          `)
           .eq('id', formId)
           .single(),
         supabase
@@ -754,27 +780,32 @@ router.post('/forms/:id/submit', async (req: Request, res: Response, next: NextF
     let workerProfileId: string
 
     if (existingWorkerProfile) {
-      // Update existing profile with any new data
-      const updates: Record<string, any> = {}
-      if (identity.fullName) updates.full_name = identity.fullName
-      if (identity.mobile) updates.mobile = identity.mobile
-      if (identity.email) updates.email = identity.email
-      if (identity.governmentId) updates.government_id = identity.governmentId
-      if (identity.currentLocation) updates.current_location = identity.currentLocation
-      if (identity.preferredLocation) updates.preferred_work_locations = [identity.preferredLocation]
-      if (identity.workerCategory) updates.worker_category = identity.workerCategory
-      if (identity.skills && identity.skills.length > 0) updates.key_skills = identity.skills
-      if (identity.yearsOfExp !== null) updates.years_of_experience = identity.yearsOfExp
-      if (identity.availability) updates.availability = identity.availability
-      updates.updated_at = new Date().toISOString()
-
-      const { error: updateError } = await supabase
-        .from('worker_profiles')
-        .update(updates)
-        .eq('id', existingWorkerProfile.id)
-
-      if (updateError) throw updateError
       workerProfileId = existingWorkerProfile.id
+
+      // Keep the original profile snapshot intact for duplicates.
+      // The new application still records raw_responses, but we avoid
+      // mutating the shared worker profile when the submission is flagged.
+      if (!isDuplicate) {
+        const updates: Record<string, any> = {}
+        if (identity.fullName) updates.full_name = identity.fullName
+        if (identity.mobile) updates.mobile = identity.mobile
+        if (identity.email) updates.email = identity.email
+        if (identity.governmentId) updates.government_id = identity.governmentId
+        if (identity.currentLocation) updates.current_location = identity.currentLocation
+        if (identity.preferredLocation) updates.preferred_work_locations = [identity.preferredLocation]
+        if (identity.workerCategory) updates.worker_category = identity.workerCategory
+        if (identity.skills && identity.skills.length > 0) updates.key_skills = identity.skills
+        if (identity.yearsOfExp !== null) updates.years_of_experience = identity.yearsOfExp
+        if (identity.availability) updates.availability = identity.availability
+        updates.updated_at = new Date().toISOString()
+
+        const { error: updateError } = await supabase
+          .from('worker_profiles')
+          .update(updates)
+          .eq('id', existingWorkerProfile.id)
+
+        if (updateError) throw updateError
+      }
     } else {
       // Create new worker profile
       const { data: newProfile, error: createError } = await supabase
@@ -871,9 +902,15 @@ router.post('/forms/:id/submit', async (req: Request, res: Response, next: NextF
     }
 
     // ── 9. Store uploaded files in documents table ──────────────────────────────
+    // The frontend now uploads files to POST /api/forms/:formId/fields/upload
+    // before submitting the form. The upload endpoint returns:
+    //   { storage_path, file_name, mime_type, file_size }
+    // The frontend stores either:
+    //   - A JSON-serialised object (string) with the upload metadata, OR
+    //   - A plain string (storage path or filename) for backward compatibility.
     for (const field of fields) {
       const val = responses[field.id]
-      if (field.field_type === 'File Upload' && val && typeof val === 'string') {
+      if (field.field_type === 'file_upload' && val) {
         const lbl = field.label.toLowerCase()
         let docType: 'resume' | 'government_id' | 'compliance_doc' | 'other' = 'other'
         if (lbl.includes('resume') || lbl.includes('cv')) {
@@ -889,14 +926,48 @@ router.post('/forms/:id/submit', async (req: Request, res: Response, next: NextF
           docType = 'government_id'
         }
 
+        // Attempt to parse rich upload metadata from the value
+        let storagePath: string | null = null
+        let fileName: string = typeof val === 'string' ? val : 'unknown'
+        let mimeType: string | null = null
+        let fileSize: number | null = null
+
+        if (typeof val === 'object' && val !== null) {
+          // Rich object passed directly (future-proof)
+          storagePath = (val as any).storage_path ?? null
+          fileName    = (val as any).file_name    ?? fileName
+          mimeType    = (val as any).mime_type    ?? null
+          fileSize    = (val as any).file_size    ?? null
+        } else if (typeof val === 'string') {
+          // Try to parse as JSON (frontend serialises upload metadata as a JSON string)
+          if (val.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(val)
+              storagePath = parsed.storage_path ?? null
+              fileName    = parsed.file_name    ?? fileName
+              mimeType    = parsed.mime_type    ?? null
+              fileSize    = parsed.file_size    ?? null
+            } catch {
+              // Not JSON — treat the whole string as the storage path
+              storagePath = val
+            }
+          } else {
+            // Plain storage path or filename
+            storagePath = val
+          }
+        }
+
         const { error: docError } = await supabase
           .from('documents')
           .insert({
-            worker_profile_id: workerProfileId,
-            application_id: application.id,
-            document_type: docType,
-            file_name: val,
-            file_path: `uploads/${application.id}/${val}`,
+            worker_profile_id:   workerProfileId,
+            application_id:      application.id,
+            document_type:       docType,
+            file_name:           fileName,
+            file_path:           storagePath ?? `uploads/${application.id}/${fileName}`,
+            storage_path:        storagePath,
+            mime_type:           mimeType,
+            file_size:           fileSize,
             verification_status: 'pending',
           })
 
@@ -919,6 +990,201 @@ router.post('/forms/:id/submit', async (req: Request, res: Response, next: NextF
 
     if (submissionError) {
       console.warn('[submit] form_submission insert failed:', submissionError.message)
+    }
+
+    // Resolve campaign campaigns relation object
+    const campaignRaw = (formData as any)?.campaigns
+    const campaign = Array.isArray(campaignRaw) ? campaignRaw[0] : campaignRaw
+
+    // ── 11. Async Acknowledgment Email ──────────────────────────────────────────
+    const candidateEmail = identity.email
+    const candidateMobile = identity.mobile
+
+    const channels = campaign?.acknowledgment_channels || []
+    const hasEmailAck = channels.includes('email')
+    const hasSmsAck = channels.includes('sms')
+    const hasWhatsappAck = channels.includes('whatsapp')
+
+    // templateId is let so it can be assigned after auto-creation
+    let templateId = campaign?.acknowledgment_email_template_id ?? null
+
+    if (hasEmailAck && candidateEmail) {
+      // Fire-and-forget — does not block the API response
+      ;(async () => {
+        try {
+          // ── 11a. Fetch recruiter name ──────────────────────────────────────
+          let recruiterName = 'Recruiter'
+          if (campaign?.owner_id) {
+            const { data: ownerProfile } = await supabase
+              .from('user_profiles')
+              .select('full_name')
+              .eq('id', campaign.owner_id)
+              .maybeSingle()
+            if (ownerProfile?.full_name) {
+              recruiterName = ownerProfile.full_name
+            }
+          }
+
+          const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
+          const statusCheckLink = `${FRONTEND_ORIGIN}/apply/status/${encodeURIComponent(identity.mobile || '')}`
+
+          const mergeFields = buildAcknowledgmentData(campaign, identity, {
+            recruiterName,
+            statusCheckLink,
+          })
+
+          // ── 11b. Auto-create default orchestrator template if missing ───────
+          if (!templateId && campaign?.id) {
+            try {
+              console.log(`[submit] No acknowledgment_email_template_id on campaign ${campaign.id}; auto-creating default...`)
+
+              const defaultSubject = 'Your Application Has Been Received – {{campaign_title}}'
+              const defaultBody = [
+                '<p>Dear {{candidate_name}},</p>',
+                '<p>Thank you for applying to the <strong>{{campaign_title}}</strong> opportunity.</p>',
+                '<p>We have received your application and our team will review it shortly.</p>',
+                '<p>',
+                '  <strong>Opportunity:</strong> {{opportunity_type}}<br />',
+                '  <strong>Location:</strong> {{city}}<br />',
+                '  <strong>Shift:</strong> {{shift_model}}',
+                '</p>',
+                '<p>You can check your application status here: <a href="{{status_check_link}}" style="color: #6366f1; text-decoration: underline;">{{status_check_link}}</a></p>',
+                '<p>',
+                '  Best regards,<br />',
+                '  <strong>{{recruiter_name}}</strong>',
+                '</p>'
+              ].join('\n')
+
+              let createdTemplate: any
+              const templateName = `ack_email_${campaign.id}_v3`
+
+              try {
+                createdTemplate = await createOrchestratorTemplate({
+                  name: templateName,
+                  channel: 'email',
+                  language: 'en',
+                  subject: defaultSubject,
+                  body: defaultBody,
+                  variables: Object.keys(mergeFields),
+                })
+              } catch (tplErr: any) {
+                if (tplErr.status === 409) {
+                  console.log(`[submit] Template ${templateName} already exists in orchestrator. Fetching details...`)
+                  const listRes: any = await getOrchestratorTemplates()
+                  const existing = listRes?.templates?.find(
+                    (t: any) =>
+                      t.name === templateName &&
+                      t.channel === 'email' &&
+                      t.language === 'en'
+                  )
+                  if (existing?.id) {
+                    createdTemplate = existing
+                    console.log(`[submit] Resolved template ID from existing template: ${existing.id}`)
+                  } else {
+                    throw tplErr
+                  }
+                } else {
+                  throw tplErr
+                }
+              }
+
+              const newId =
+                (createdTemplate as any)?.id ??
+                (createdTemplate as any)?.template_id ??
+                (createdTemplate as any)?.data?.id ??
+                null
+
+              if (newId) {
+                templateId = String(newId)
+                // Persist so future submissions skip creation
+                await supabase
+                  .from('campaigns')
+                  .update({ acknowledgment_email_template_id: templateId })
+                  .eq('id', campaign.id)
+                console.log(`[submit] Auto-created/resolved orchestrator template id=${templateId} and saved to campaign ${campaign.id}`)
+              } else {
+                console.warn('[submit] Orchestrator did not return a usable template id; skipping email.')
+              }
+            } catch (tplErr: any) {
+              console.warn('[submit] Auto-create orchestrator template failed:', tplErr.message)
+            }
+          }
+
+          // ── 11c. Send via orchestrator ─────────────────────────────────────
+          if (!templateId) {
+            console.warn(`[submit] Acknowledgment email skipped: no template_id for campaign ${campaign?.id}`)
+            await supabase
+              .from('candidate_applications')
+              .update({ ack_email_status: 'skipped' })
+              .eq('id', application.id)
+            return
+          }
+
+          console.log(`[submit] Sending acknowledgment email via template ${templateId} to ${candidateEmail}...`)
+          await sendOrchestratorNotification({
+            recipient: {
+              user_id: workerProfileId,
+              email: candidateEmail,
+            },
+            notification: {
+              type: 'campaign_acknowledgment',
+              priority: 'high',
+              channels: ['email'],
+              template_id: templateId,
+              data: mergeFields,
+            },
+          })
+
+          // Log success
+          const { error: updateErr } = await supabase
+            .from('candidate_applications')
+            .update({ ack_email_status: 'sent', ack_sent_at: new Date().toISOString() })
+            .eq('id', application.id)
+
+          if (updateErr) {
+            console.error(`[submit] Failed to update ack_email_status to 'sent':`, updateErr.message)
+          } else {
+            console.log(`[submit] Acknowledgment email sent successfully for application ${application.id}`)
+          }
+        } catch (err: any) {
+          console.error(`[submit] Acknowledgment email failed for application ${application.id}:`, err.message)
+          await supabase
+            .from('candidate_applications')
+            .update({ ack_email_status: 'failed' })
+            .eq('id', application.id)
+        }
+      })()
+    } else {
+      // Not requested or no email address provided
+      await supabase
+        .from('candidate_applications')
+        .update({ ack_email_status: 'skipped' })
+        .eq('id', application.id)
+    }
+
+    if (campaign?.owner_id) {
+      ;(async () => {
+        try {
+          await sendRecruiterNewApplicationAlert(campaign, {
+            applicationId: application.id,
+            submissionId: submissionData?.id ?? null,
+            candidate: identity,
+            sourceChannel,
+          })
+        } catch (err: any) {
+          console.warn(`[submit] Recruiter alert failed for application ${application.id}:`, err.message)
+        }
+      })()
+    }
+
+    // SMS acknowledgment placeholder (later)
+    if (hasSmsAck && candidateMobile) {
+      console.log(`[submit] SMS acknowledgment placeholder: SMS would be sent to ${candidateMobile} using template ${campaign?.acknowledgment_sms_template_id}`)
+    }
+
+    // WhatsApp acknowledgment placeholder (later)
+    if (hasWhatsappAck && candidateMobile) {
+      console.log(`[submit] WhatsApp acknowledgment placeholder: WhatsApp would be sent to ${candidateMobile} using template ${campaign?.acknowledgment_whatsapp_template_id}`)
     }
 
     return res.status(201).json({

@@ -167,6 +167,31 @@ function getSubmissionName(
   return applicant.candidate_name || 'Unknown'
 }
 
+function getSubmissionSnapshotValue(
+  applicant: ApplicantQueueRow,
+  formFieldOrder: Array<{ id: string } & FormFieldMeta>,
+  matchers: string[],
+) {
+  const responses = applicant.raw_responses ?? {}
+
+  for (const field of formFieldOrder) {
+    const label = field.label.toLowerCase()
+    if (!matchers.some((term) => label.includes(term))) continue
+
+    const rawValue = responses[field.id]
+    const value =
+      typeof rawValue === 'string'
+        ? rawValue.trim()
+        : Array.isArray(rawValue)
+          ? rawValue.join(', ').trim()
+          : ''
+
+    if (value) return value
+  }
+
+  return null
+}
+
 export function CampaignApplicantsPage() {
   const params = useParams()
   const campaignId = params.id
@@ -248,14 +273,14 @@ export function CampaignApplicantsPage() {
   }, [campaignId])
 
   useEffect(() => {
-    const formId = campaign?.application_form_id ?? selected?.form_id ?? null
-    if (formId === null) return
+    const formId = campaign?.application_form_id ?? selected?.form_id
+    if (!formId) return
 
     let active = true
 
     async function loadFormFields() {
       try {
-        const formData = await getForm(formId)
+        const formData = await getForm(formId as string)
         if (!active) return
 
         const mapping: Record<string, { label: string; field_type: string }> = {}
@@ -281,7 +306,7 @@ export function CampaignApplicantsPage() {
 
   const handleSearch = (event: FormEvent) => {
     event.preventDefault()
-    void loadApplicants(search, statusFilter)
+    void loadApplicants(search, statusFilter, sourceChannelFilter)
   }
 
   const handleStatusFilter = (value: string) => {
@@ -315,7 +340,7 @@ export function CampaignApplicantsPage() {
     () =>
       [
         search ? `Search: ${search}` : null,
-        statusFilter ? `Status: ${statusFilter}` : null,
+        statusFilter ? `Status: ${STATUS_FILTER_OPTIONS.find((o) => o.value === statusFilter)?.label ?? statusFilter}` : null,
         sourceChannelFilter ? `Channel: ${SOURCE_CHANNEL_OPTIONS.find(o => o.value === sourceChannelFilter)?.label ?? sourceChannelFilter}` : null,
       ].filter(Boolean) as string[],
     [search, statusFilter, sourceChannelFilter],
@@ -330,21 +355,54 @@ export function CampaignApplicantsPage() {
     () =>
       selected
         ? [
-            { label: 'Mobile', value: selected.candidate_mobile },
-            { label: 'Email', value: selected.candidate_email },
-            { label: 'Current Location', value: selected.candidate_location },
-            { label: 'Preferred Location', value: selected.preferred_location },
-            { label: 'Worker Category', value: selected.worker_category },
+            {
+              label: 'Mobile',
+              value:
+                getSubmissionSnapshotValue(selected, formFieldOrder, ['mobile', 'phone']) ||
+                selected.candidate_mobile,
+            },
+            {
+              label: 'Email',
+              value:
+                getSubmissionSnapshotValue(selected, formFieldOrder, ['email']) ||
+                selected.candidate_email,
+            },
+            {
+              label: 'Current Location',
+              value:
+                getSubmissionSnapshotValue(selected, formFieldOrder, ['current location', 'current city']) ||
+                selected.candidate_location,
+            },
+            {
+              label: 'Preferred Location',
+              value:
+                getSubmissionSnapshotValue(selected, formFieldOrder, ['preferred location']) ||
+                selected.preferred_location,
+            },
+            {
+              label: 'Worker Category',
+              value:
+                getSubmissionSnapshotValue(selected, formFieldOrder, ['worker category', 'category', 'worker type']) ||
+                selected.worker_category,
+            },
             {
               label: 'Skills',
               value:
-                Array.isArray(selected.skills) && selected.skills.length ? selected.skills.join(', ') : null,
+                getSubmissionSnapshotValue(selected, formFieldOrder, ['skill']) ||
+                (Array.isArray(selected.skills) && selected.skills.length ? selected.skills.join(', ') : null),
             },
             {
               label: 'Experience',
-              value: selected.years_of_experience != null ? `${selected.years_of_experience} yrs` : null,
+              value:
+                getSubmissionSnapshotValue(selected, formFieldOrder, ['experience', 'exp', 'year']) ||
+                (selected.years_of_experience != null ? `${selected.years_of_experience} yrs` : null),
             },
-            { label: 'Availability', value: selected.availability },
+            {
+              label: 'Availability',
+              value:
+                getSubmissionSnapshotValue(selected, formFieldOrder, ['availability', 'shift']) ||
+                selected.availability,
+            },
             {
               label: 'Source Channel',
               value: selected.source_channel
@@ -353,7 +411,7 @@ export function CampaignApplicantsPage() {
             },
           ]
         : [],
-    [selected],
+    [selected, formFieldOrder],
   )
 
   const submissionFields = useMemo(() => {
@@ -442,91 +500,111 @@ export function CampaignApplicantsPage() {
         </div>
       ) : null}
 
-      <section className="panel applicants-toolbar-panel">
-        <div className="applicants-toolbar">
-          <form className="applicants-search" onSubmit={handleSearch}>
+      <section className="panel applicants-toolbar-panel" style={{ padding: '24px 28px' }}>
+        <div className="applicants-toolbar" style={{ borderBottom: 'none', paddingBottom: 0, marginBottom: 0, gap: '16px' }}>
+          <form className="applicants-search" onSubmit={handleSearch} style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '500px' }}>
             <input
               type="text"
               className="apply-input applicants-search__input"
+              style={{
+                flexGrow: 1,
+                borderRadius: '8px',
+                border: '1px solid rgba(99, 102, 241, 0.18)',
+                background: 'rgba(8, 14, 30, 0.60)',
+                color: '#f8fafc',
+                padding: '10px 14px',
+                fontSize: '0.88rem'
+              }}
               placeholder="Search by name, mobile, email..."
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
-            <button type="submit" className="primary-button applicants-search__button">
+            <button type="submit" className="primary-button applicants-search__button" style={{ borderRadius: '8px', minHeight: '38px' }}>
               Search
             </button>
-            {search ? (
-              <button
-                type="button"
-                className="secondary-button applicants-search__clear"
-                onClick={() => {
-                  setSearch('')
-                  void loadApplicants('', statusFilter, sourceChannelFilter)
-                }}
-              >
-                Clear
-              </button>
-            ) : null}
           </form>
 
-          <div className="applicants-filter-chips">
-            {STATUS_FILTER_OPTIONS.map((option) => {
-              const active = statusFilter === option.value
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => handleStatusFilter(option.value)}
-                  className={`applicants-filter-chip${active ? ' applicants-filter-chip--active' : ''}`}
-                >
-                  {option.label}
-                </button>
-              )
-            })}
-          </div>
+          <div className="applicants-filters-row" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'end', width: '100%', marginTop: '12px' }}>
+            <div className="applicants-filter-group">
+              <label className="applicants-filter-label" htmlFor="status-filter">Status</label>
+              <select
+                id="status-filter"
+                className="applicants-filter-select"
+                value={statusFilter}
+                onChange={(event) => handleStatusFilter(event.target.value)}
+              >
+                {STATUS_FILTER_OPTIONS.map((option) => (
+                  <option key={option.value || 'all'} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div className="applicants-filter-chips applicants-filter-chips--channel">
-            <span className="applicants-filter-label">Source:</span>
-            {SOURCE_CHANNEL_OPTIONS.map((option) => {
-              const active = sourceChannelFilter === option.value
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => handleSourceChannelFilter(option.value)}
-                  className={`applicants-filter-chip applicants-filter-chip--channel${active ? ' applicants-filter-chip--active' : ''}`}
-                  title={`Filter by ${option.label}`}
-                >
-                  <span>{option.emoji}</span>
-                  {option.label}
-                </button>
-              )
-            })}
-            {sourceChannelFilter && (
+            <div className="applicants-filter-group">
+              <label className="applicants-filter-label" htmlFor="source-filter">Source</label>
+              <select
+                id="source-filter"
+                className="applicants-filter-select"
+                value={sourceChannelFilter}
+                onChange={(event) => handleSourceChannelFilter(event.target.value)}
+              >
+                <option value="">All Sources</option>
+                {SOURCE_CHANNEL_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {(search || statusFilter || sourceChannelFilter) && (
               <button
                 type="button"
-                className="applicants-filter-chip applicants-filter-chip--clear"
-                onClick={() => handleSourceChannelFilter(sourceChannelFilter)}
+                onClick={() => {
+                  setSearch('')
+                  setStatusFilter('')
+                  setSourceChannelFilter('')
+                  void loadApplicants('', '', '')
+                }}
+                style={{
+                  background: 'rgba(244, 63, 94, 0.1)',
+                  color: '#fb7185',
+                  border: '1px solid rgba(244, 63, 94, 0.2)',
+                  borderRadius: '20px',
+                  padding: '6px 14px',
+                  fontSize: '0.8rem',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 150ms ease'
+                }}
               >
-                ✕ Clear
+                ✕ Clear All Filters
               </button>
             )}
           </div>
         </div>
 
-        <div className="applicants-toolbar__meta">
-          <div className="applicants-toolbar__count">
-            {total} candidate{total === 1 ? '' : 's'}
+        <div className="applicants-toolbar__meta" style={{ display: 'flex', justifyContent: 'space-between', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}>
+          <div className="applicants-toolbar__count" style={{ fontSize: '0.84rem', color: '#94a3b8', fontWeight: '500' }}>
+            Found {total} applicant{total === 1 ? '' : 's'}
           </div>
-          <div className="applicants-toolbar__active-filters">
+          <div className="applicants-toolbar__active-filters" style={{ display: 'flex', gap: '6px' }}>
             {activeFilters.length ? (
               activeFilters.map((filter) => (
-                <span key={filter} className="applicant-filter-pill">
+                <span key={filter} className="applicant-filter-pill" style={{
+                  fontSize: '0.76rem',
+                  padding: '2px 8px',
+                  background: 'rgba(99, 102, 241, 0.08)',
+                  color: '#818cf8',
+                  borderRadius: '4px',
+                  border: '1px solid rgba(99, 102, 241, 0.12)'
+                }}>
                   {filter}
                 </span>
               ))
             ) : (
-              <span className="applicants-toolbar__hint">No filters applied</span>
+              <span className="applicants-toolbar__hint" style={{ fontSize: '0.78rem', color: '#475569', fontStyle: 'italic' }}>No active filters</span>
             )}
           </div>
         </div>
@@ -535,8 +613,8 @@ export function CampaignApplicantsPage() {
       {updateError ? <div className="alert error applicants-alert">{updateError}</div> : null}
 
       <div className="applicants-grid">
-        <section className="panel applicants-table-panel">
-          <div className="panel-header applicants-panel-header">
+        <section className="panel applicants-table-panel" style={{ padding: '24px' }}>
+          <div className="panel-header applicants-panel-header" style={{ marginBottom: '16px' }}>
             <div>
               <span className="eyebrow">Applicant Queue</span>
               <h2>Applications Received</h2>
@@ -570,6 +648,17 @@ export function CampaignApplicantsPage() {
                 <tbody>
                   {applicants.map((app) => {
                     const isSelected = selected?.application_id === app.application_id
+                    const channelInfo = SOURCE_CHANNEL_OPTIONS.find((o) => o.value === app.source_channel)
+                    const chColor =
+                      app.source_channel === 'whatsapp'
+                        ? '#25d366'
+                        : app.source_channel === 'linkedin'
+                          ? '#0077b5'
+                          : app.source_channel === 'facebook'
+                            ? '#1877f2'
+                            : app.source_channel === 'instagram'
+                              ? '#e1306c'
+                              : '#6366f1'
 
                     return (
                       <tr
@@ -577,46 +666,75 @@ export function CampaignApplicantsPage() {
                         data-clickable
                         onClick={() => setSelected(app)}
                         className={isSelected ? 'applicants-row applicants-row--selected' : 'applicants-row'}
+                        style={{
+                          background: isSelected ? 'rgba(99, 102, 241, 0.08)' : undefined,
+                          transition: 'background 150ms ease'
+                        }}
                       >
-                        <td className="applicants-cell applicants-cell--candidate">
-                          <div className="applicants-candidate-name-row">
-                            <span className="applicants-candidate-name">
+                        <td className="applicants-cell applicants-cell--candidate" style={{ padding: '16px' }}>
+                          <div className="applicants-candidate-name-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span className="applicants-candidate-name" style={{ fontWeight: '600', color: '#f8fafc' }}>
                               {getSubmissionName(app, formFieldOrder)}
                             </span>
-                            {app.is_duplicate ? <CompactBadge label="Duplicate" tone="danger" /> : null}
+                            {app.is_duplicate ? <CompactBadge label="Duplicate profile" tone="danger" /> : null}
                           </div>
-                          <div className="applicants-candidate-submeta">
-                            Application ID {app.application_id.slice(0, 8)}…
+                          <div className="applicants-candidate-submeta" style={{ fontSize: '0.76rem', color: '#64748b', marginTop: '2px' }}>
+                            ID: {app.application_id.slice(0, 8)}…
                           </div>
                         </td>
-                        <td className="applicants-cell">
-                          <div className="applicants-contact-primary">{app.candidate_mobile || '—'}</div>
-                          <div className="applicants-contact-secondary">{app.candidate_email || '—'}</div>
+                        <td className="applicants-cell" style={{ padding: '16px' }}>
+                          <div className="applicants-contact-primary" style={{ fontWeight: '500', color: '#cbd5e1' }}>
+                            {getSubmissionSnapshotValue(app, formFieldOrder, ['mobile', 'phone']) || app.candidate_mobile || '—'}
+                          </div>
+                          <div className="applicants-contact-secondary" style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '2px' }}>
+                            {getSubmissionSnapshotValue(app, formFieldOrder, ['email']) || app.candidate_email || '—'}
+                          </div>
                         </td>
-                        <td className="applicants-cell applicants-cell--muted">
-                          {app.worker_category || '—'}
+                        <td className="applicants-cell applicants-cell--muted" style={{ padding: '16px', color: '#94a3b8' }}>
+                          {getSubmissionSnapshotValue(app, formFieldOrder, ['worker category', 'category', 'worker type']) || app.worker_category || '—'}
                         </td>
-                        <td className="applicants-cell applicants-cell--muted">
-                          {app.candidate_location || '—'}
+                        <td className="applicants-cell applicants-cell--muted" style={{ padding: '16px', color: '#94a3b8' }}>
+                          {getSubmissionSnapshotValue(app, formFieldOrder, ['current location', 'current city']) || app.candidate_location || '—'}
                         </td>
-                        <td className="applicants-cell">
+                        <td className="applicants-cell applicants-cell--source" style={{ padding: '16px' }}>
                           {app.source_channel ? (
-                            <span className={`applicants-source-badge applicants-source-badge--${app.source_channel}`}>
-                              {SOURCE_CHANNEL_OPTIONS.find(o => o.value === app.source_channel)?.emoji}{' '}
-                              {SOURCE_CHANNEL_OPTIONS.find(o => o.value === app.source_channel)?.label ?? app.source_channel}
+                            <span className="applicants-source-pill" style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '4px 10px',
+                              borderRadius: '6px',
+                              fontSize: '0.78rem',
+                              fontWeight: '600',
+                              background: `${chColor}15`,
+                              color: chColor,
+                              border: `1px solid ${chColor}25`
+                            }}>
+                              <span>{channelInfo?.emoji}</span>
+                              {channelInfo?.label ?? app.source_channel}
                             </span>
                           ) : (
                             <span className="applicants-cell--muted">—</span>
                           )}
                         </td>
-                        <td className="applicants-cell">
+                        <td className="applicants-cell" style={{ padding: '16px' }}>
                           <StatusPill status={app.status} />
                         </td>
-                        <td className="applicants-cell applicants-cell--meta">
+                        <td className="applicants-cell applicants-cell--meta" style={{ padding: '16px', color: '#94a3b8', fontSize: '0.78rem' }}>
                           {formatDate(app.applied_at)}
                         </td>
-                        <td className="applicants-cell applicants-cell--actions">
-                          <span className="table-link">Details →</span>
+                        <td className="applicants-cell applicants-cell--actions" style={{ padding: '16px', textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              navigate(`/campaigns/${campaignId}/applicants/${app.application_id}`)
+                            }}
+                          >
+                            Details →
+                          </button>
                         </td>
                       </tr>
                     )
@@ -626,156 +744,6 @@ export function CampaignApplicantsPage() {
             </div>
           )}
         </section>
-
-        <aside className="preview-panel candidate-detail-panel">
-          {selected ? (
-            <>
-              <div className="preview-header applicants-detail-header">
-                <div>
-                  <span className="eyebrow" style={{ color: selectedStatus?.color ?? '#10b981' }}>
-                    Candidate Details
-                  </span>
-                  <h2>{selectedSubmissionName || '—'}</h2>
-                  <p className="applicants-detail-subtitle">
-                    {campaign?.opportunity_title || 'Campaign applicant'} · Applied {formatDate(selected.applied_at)}
-                  </p>
-                </div>
-                <div className="applicants-detail-status-stack">
-                  <StatusPill status={selected.status} />
-                  {selected.is_duplicate ? (
-                    <CompactBadge label="Duplicate" tone="danger" />
-                  ) : (
-                    <CompactBadge label="New profile" tone="active" />
-                  )}
-                </div>
-              </div>
-
-              <div className="applicants-detail-actions">
-                {nextActions.slice(0, 2).map((nextStatus) => {
-                  const cfg = STATUS_CONFIG[nextStatus]
-                  const isUpdating = updatingId === selected.application_id
-
-                  return (
-                    <button
-                      key={nextStatus}
-                      type="button"
-                      disabled={isUpdating}
-                      onClick={() => handleStatusAction(selected.application_id, nextStatus)}
-                      className="applicants-detail-action"
-                      style={
-                        {
-                          '--action-color': cfg.color,
-                          '--action-bg': cfg.bg,
-                        } as CSSProperties
-                      }
-                    >
-                      {isUpdating ? 'Updating…' : cfg.label}
-                    </button>
-                  )
-                })}
-
-                {selected.status !== 'rejected' ? (
-                  <button
-                    type="button"
-                    className="applicants-detail-action applicants-detail-action--ghost"
-                    onClick={() => handleStatusAction(selected.application_id, 'rejected')}
-                    disabled={updatingId === selected.application_id}
-                  >
-                    Reject
-                  </button>
-                ) : null}
-              </div>
-
-              <section className="applicants-detail-section">
-                <SectionTitle
-                  eyebrow="Profile"
-                  title="Candidate profile"
-                  description="Identity and work-readiness details captured from the application."
-                />
-                <div className="candidate-fields-list applicants-collapsed-list">
-                  {selectedProfileFields.map(({ label, value }) => (
-                    <div key={label} className="candidate-field-item">
-                      <span className="candidate-field-label">{label}</span>
-                      <div className={`candidate-field-value${!value ? ' empty' : ''}`}>
-                        {value || 'Not provided'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              <section className="applicants-detail-section">
-                <SectionTitle
-                  eyebrow="Submission"
-                  title="Form submission details"
-                  description="Everything the candidate submitted that is not already shown in the profile section."
-                />
-                <div className="candidate-meta applicants-candidate-meta">
-                  <span>Application ID: {selected.application_id}</span>
-                  <span>Form ID: {selected.form_id}</span>
-                  <span>Submitted: {formatDate(selected.applied_at)}</span>
-                </div>
-                <div className="candidate-fields-list applicants-collapsed-list">
-                  {extraSubmissionFields.length ? (
-                    extraSubmissionFields.map(({ fieldId, label, value }) => (
-                      <div key={fieldId} className="candidate-field-item">
-                        <span className="candidate-field-label">{label}</span>
-                        <div className="candidate-field-value">
-                          {Array.isArray(value) ? value.join(', ') : String(value)}
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="candidate-empty-inline">
-                      No additional submission fields were captured for this applicant.
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              <section className="applicants-detail-section">
-                <SectionTitle
-                  eyebrow="Documents"
-                  title="Uploaded documents"
-                  description="Any file upload responses appear here once they are available."
-                />
-                <div className="candidate-fields-list applicants-collapsed-list">
-                  {documentFields.length ? (
-                    documentFields.map(({ fieldId, label, value }) => (
-                      <div key={fieldId} className="candidate-field-item">
-                        <span className="candidate-field-label">{label}</span>
-                        <div className="candidate-field-value">
-                          <a href="#" onClick={(event) => event.preventDefault()} className="applicants-document-link">
-                            {Array.isArray(value) ? value.join(', ') : String(value)}
-                          </a>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="candidate-empty-inline">No uploaded documents for this submission.</div>
-                  )}
-                </div>
-              </section>
-
-              <section className="applicants-detail-section applicants-detail-section--footer">
-                {nextActions.length === 0 && selected.status === 'hired' ? (
-                  <div className="applicants-success-note">Candidate successfully hired.</div>
-                ) : (
-                  <div className="applicants-detail-footnote">
-                    Click another row to review a different candidate, or use the action buttons to move this
-                    application forward.
-                  </div>
-                )}
-              </section>
-            </>
-          ) : (
-            <div className="candidate-empty-state">
-              <span className="empty-icon">👤</span>
-              <h3>No candidate selected</h3>
-              <p>Click a row in the applicants table to view their profile and take action.</p>
-            </div>
-          )}
-        </aside>
       </div>
     </div>
   )

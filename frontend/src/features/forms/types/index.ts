@@ -7,7 +7,7 @@ import type {
 export const formMetaSchema = z.object({
   name: z.string().trim().min(2, 'Form name is required'),
   description: z.string().trim(),
-  supported_languages: z.string().trim(),
+  supported_languages: z.string(),
 })
 
 export type FormMetaValues = z.infer<typeof formMetaSchema>

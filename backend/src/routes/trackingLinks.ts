@@ -169,7 +169,7 @@ router.post(
   '/tracking-links/:linkId/click',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { linkId } = req.params
+      const linkId = req.params.linkId as string
 
       // Validate UUID format to prevent SQL injection through params
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i

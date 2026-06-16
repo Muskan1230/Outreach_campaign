@@ -33,6 +33,11 @@ export interface ApplicantListResponse {
   pagination: { page: number; limit: number; total: number; totalPages: number }
 }
 
+export interface ApplicantDetailResponse {
+  campaign: { id: string; name: string; opportunity_title: string }
+  application: ApplicantQueueRow
+}
+
 export interface SubmissionListResponse {
   data: Array<{
     id: string
@@ -72,6 +77,10 @@ export function updateApplicationStatus(
       body: { status, notes },
     },
   )
+}
+
+export function getApplicantDetail(campaignId: string, appId: string) {
+  return request<ApplicantDetailResponse>(`/api/campaigns/${campaignId}/applicants/${appId}`)
 }
 
 // Legacy: kept for backward compat with older form_submissions view

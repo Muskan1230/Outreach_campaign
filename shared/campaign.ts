@@ -46,6 +46,11 @@ export type CampaignPayload = {
   end_date: string
   application_form_id?: string | null
   status?: CampaignStatus
+  acknowledgment_channels?: string[]
+  acknowledgment_email_template_id?: string | null
+  acknowledgment_sms_template_id?: string | null
+  acknowledgment_whatsapp_template_id?: string | null
+  recruiter_alert_email_template_id?: string | null
 }
 
 export type CampaignStatusPatch = {
@@ -57,6 +62,12 @@ export type CampaignRecord = CampaignPayload & {
   status: CampaignStatus
   created_at: string
   updated_at: string
+}
+
+export type CampaignDuplicateResponse = {
+  id: string
+  name: string
+  templates_count: number
 }
 
 export type CampaignListItem = Pick<

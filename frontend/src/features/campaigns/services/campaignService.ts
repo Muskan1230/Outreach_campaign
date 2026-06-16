@@ -1,5 +1,6 @@
 import { request } from '../../../services/apiClient'
 import type {
+  CampaignDuplicateResponse,
   CampaignListItem,
   CampaignPayload,
   CampaignRecord,
@@ -62,5 +63,11 @@ export function updateCampaignStatus(id: string, status: CampaignStatus) {
 export function deleteCampaign(id: string) {
   return request<void>(`/api/campaigns/${id}`, {
     method: 'DELETE',
+  })
+}
+
+export function duplicateCampaign(id: string) {
+  return request<CampaignDuplicateResponse>(`/api/campaigns/${id}/duplicate`, {
+    method: 'POST',
   })
 }

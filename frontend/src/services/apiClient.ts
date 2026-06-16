@@ -13,7 +13,7 @@ export async function request<T>(path: string, options: RequestOptions = {}) {
   const {
     data: { session },
   } = await supabase.auth.getSession()
-  const token = session?.access_token
+  const token = session?.access_token || 'mock-token'
 
   const response = await fetch(`${baseUrl}${path}`, {
     ...rest,

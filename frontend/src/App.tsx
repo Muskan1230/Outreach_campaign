@@ -27,15 +27,22 @@ import { CampaignDistributePage } from './features/workflow/pages/CampaignDistri
 
 // Feature: Applicants
 import { CampaignApplicantsPage } from './features/applicants/pages/CampaignApplicantsPage'
+import { ApplicantDetailPage } from './features/applicants/pages/ApplicantDetailPage'
+
+// Feature: Analytics
+import { CampaignAnalyticsPage } from './features/analytics/pages/CampaignAnalyticsPage'
+import { RecruiterNotificationsPage } from './features/notifications/pages/RecruiterNotificationsPage'
 
 // Feature: Candidate Apply (public — no auth required)
 import { CandidateApplyPage } from './features/candidate-apply/pages/CandidateApplyPage'
 import { ApplicationStatusPage } from './features/candidate-apply/pages/ApplicationStatusPage'
+import { TrackRedirectPage } from './features/candidate-apply/pages/TrackRedirectPage'
 
 function AppShell() {
   const location = useLocation()
   const isCandidateView =
-    location.pathname.startsWith('/apply') || location.pathname.startsWith('/apply/status')
+    location.pathname.startsWith('/apply') ||
+    location.pathname.startsWith('/track')
   const isLoginView = location.pathname === '/login'
 
   return (
@@ -47,6 +54,8 @@ function AppShell() {
         <Route path="/apply/:id" element={<CandidateApplyPage />} />
         <Route path="/apply/status" element={<ApplicationStatusPage />} />
         <Route path="/apply/status/:mobile" element={<ApplicationStatusPage />} />
+        {/* Tracking redirect: records click + redirects to apply form */}
+        <Route path="/track/:linkId" element={<TrackRedirectPage />} />
 
         {/* ── Protected recruiter routes ── */}
         <Route element={<ProtectedRoute />}>
@@ -58,6 +67,8 @@ function AppShell() {
           <Route path="/campaigns/:id/form" element={<CampaignFormStagePage />} />
           <Route path="/campaigns/:id/distribute" element={<CampaignDistributePage />} />
           <Route path="/campaigns/:id/applicants" element={<CampaignApplicantsPage />} />
+          <Route path="/campaigns/:id/applicants/:appId" element={<ApplicantDetailPage />} />
+          <Route path="/campaigns/:id/analytics" element={<CampaignAnalyticsPage />} />
           <Route path="/templates" element={<TemplateListPage />} />
           <Route path="/templates/new" element={<TemplateEditorPage mode="create" />} />
           <Route path="/templates/:id" element={<TemplateEditorPage mode="edit" />} />
@@ -65,6 +76,7 @@ function AppShell() {
           <Route path="/forms/new" element={<ApplicationFormEditorPage mode="create" />} />
           <Route path="/forms/:id" element={<ApplicationFormEditorPage mode="edit" />} />
           <Route path="/forms/:id/preview" element={<ApplicationFormPreviewPage />} />
+          <Route path="/notifications" element={<RecruiterNotificationsPage />} />
           <Route path="*" element={<Navigate to="/campaigns" replace />} />
         </Route>
       </Routes>
@@ -81,4 +93,3 @@ function App() {
 }
 
 export default App
-

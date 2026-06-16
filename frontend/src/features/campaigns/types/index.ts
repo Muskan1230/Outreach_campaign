@@ -30,6 +30,7 @@ export const formSchema = z
     compensation_model: z.string().trim().min(2, 'Compensation model is required'),
     start_date: z.string().trim().min(1, 'Start date is required'),
     end_date: z.string().trim().min(1, 'End date is required'),
+    acknowledgment_channels: z.array(z.string()).default([]),
   })
   .refine(
     (value) => {
@@ -59,6 +60,7 @@ export function toFormValues(campaign?: CampaignRecord | null): CampaignFormValu
       compensation_model: '',
       start_date: '',
       end_date: '',
+      acknowledgment_channels: ['email'],
     }
   }
 
@@ -79,10 +81,15 @@ export function toFormValues(campaign?: CampaignRecord | null): CampaignFormValu
         : campaign.compensation_model,
     start_date: campaign.start_date,
     end_date: campaign.end_date,
+    acknowledgment_channels: campaign.acknowledgment_channels ?? [],
   }
 }
 
-export function toPayload(values: CampaignFormValues, status?: CampaignStatus): CampaignPayload {
+export function toPayload(
+  values: CampaignFormValues,
+  status?: CampaignStatus,
+  campaign?: CampaignRecord | null,
+): CampaignPayload {
   return {
     name: values.name.trim(),
     opportunity_title: values.opportunity_title.trim(),
@@ -98,6 +105,10 @@ export function toPayload(values: CampaignFormValues, status?: CampaignStatus): 
     compensation_details: buildCompensationDetails(values.compensation_model),
     start_date: values.start_date,
     end_date: values.end_date,
+    acknowledgment_channels: values.acknowledgment_channels,
     status,
+    acknowledgment_email_template_id: campaign?.acknowledgment_email_template_id ?? null,
+    acknowledgment_sms_template_id: campaign?.acknowledgment_sms_template_id ?? null,
+    acknowledgment_whatsapp_template_id: campaign?.acknowledgment_whatsapp_template_id ?? null,
   }
 }

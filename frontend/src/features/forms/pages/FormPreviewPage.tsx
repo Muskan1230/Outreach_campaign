@@ -51,7 +51,6 @@ export function ApplicationFormPreviewPage() {
         name: form.name,
         description: form.description,
         campaign_id: form.campaign_id,
-        supported_languages: form.supported_languages,
         is_published: true,
       }
       const updated = await updateForm(form.id, payload)

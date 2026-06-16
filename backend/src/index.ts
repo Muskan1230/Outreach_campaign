@@ -9,7 +9,11 @@ import campaignsRouter from './routes/campaigns.js'
 import formsRouter from './routes/forms.js'
 import templatesRouter from './routes/templates.js'
 import applyRouter from './routes/apply.js'
-import trackingLinksRouter from './routes/trackingLinks.js'
+import trackingLinksRouter from './routes/tracking.js'
+import analyticsRouter from './routes/analytics.js'
+import notificationsV1Router from './routes/notificationsV1.js'
+import recruiterNotificationsRouter from './routes/recruiterNotifications.js'
+import uploadRouter from './routes/upload.js'
 import { requireAuth } from './middleware/requireAuth.js'
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url))
@@ -59,11 +63,18 @@ const publicRouter = Router()
 publicRouter.get('/forms/:id', (req, res, next) => formsRouter(req, res, next))
 publicRouter.post('/forms/:id/submit', submitRateLimiter, (req, res, next) => formsRouter(req, res, next))
 
+// File upload endpoint — multipart/form-data, no auth required (candidates are anonymous)
+// POST /api/forms/:formId/fields/upload
+publicRouter.post('/forms/:formId/fields/upload', (req, res, next) => uploadRouter(req, res, next))
+
 // Candidate application status — no login required
 publicRouter.get('/apply/status/:mobile', (req, res, next) => applyRouter(req, res, next))
 
-// Tracking link click counter — public, called from candidate apply page (fire-and-forget)
+// Tracking link endpoints — public (no auth), called from candidate pages:
+// POST /click — fire-and-forget click counter
+// GET  /resolve — returns the full_url so the /track/:linkId page can redirect
 publicRouter.post('/tracking-links/:linkId/click', (req, res, next) => trackingLinksRouter(req, res, next))
+publicRouter.get('/tracking-links/:linkId/resolve', (req, res, next) => trackingLinksRouter(req, res, next))
 
 app.use('/api', publicRouter)
 
@@ -71,9 +82,16 @@ app.use('/api', publicRouter)
 
 app.use('/api/campaigns', requireAuth, campaignsRouter)
 app.use('/api/templates', requireAuth, templatesRouter)
+app.use('/api/analytics', requireAuth, analyticsRouter)
+app.use('/api/recruiter-notifications', requireAuth, recruiterNotificationsRouter)
+
+// ── Versioned notification routes (v1) — proxy to DataAlchemy orchestrator ────
+// POST /api/v1/tenant/templates  — create template
+// POST /api/v1/notifications/send — send single notification
+app.use('/api/v1', requireAuth, notificationsV1Router)
 
 // Tracking links — protected CRUD (create, list, deactivate) for recruiters
-// Note: the public click route is mounted above in publicRouter
+// Note: the public click + resolve routes are mounted above in publicRouter
 app.use('/api', requireAuth, trackingLinksRouter)
 
 // All remaining /api/forms routes (list, create, edit, fields) + submissions
@@ -94,8 +112,17 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
     })
   }
 
-  const message = error instanceof Error ? error.message : 'Unexpected server error'
-  const status = message.includes('not found') ? 404 : 500
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string'
+          ? (error as { message: string }).message
+          : 'Unexpected server error'
+
+  const status =
+    message.includes('not found') ? 404 : 500
   res.status(status).json({
     message,
   })
